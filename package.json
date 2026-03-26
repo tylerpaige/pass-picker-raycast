@@ -1,0 +1,34 @@
+{
+  "name": "pass-picker",
+  "title": "Pass Picker",
+  "description": "Search and copy passwords from the pass password store",
+  "icon": "icon.png",
+  "author": "tylerpaige",
+  "categories": ["Security"],
+  "platforms": ["macOS"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "index",
+      "title": "Search Passwords",
+      "description": "List and search entries in your pass password store",
+      "mode": "view"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.93.3"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "typescript": "^5.4.5",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "@types/node": "20.8.10"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint"
+  }
+}
