@@ -62,6 +62,7 @@ interface Field {
   label: string;
   value: string;
   concealed?: boolean;
+  otp?: boolean;
 }
 
 function parseFields(raw: string): Field[] {
@@ -69,10 +70,19 @@ function parseFields(raw: string): Field[] {
   if (lines.length === 0) return [];
 
   const fields: Field[] = [{ label: "password", value: lines[0], concealed: true }];
+  let hasOtp = false;
 
   let i = 1;
   while (i < lines.length) {
     const line = lines[i];
+
+    // Detect otpauth:// URI — don't expose the secret, just flag for OTP generation
+    if (line.trim().startsWith("otpauth://")) {
+      hasOtp = true;
+      i++;
+      continue;
+    }
+
     const colonIdx = line.indexOf(":");
     if (colonIdx !== -1) {
       const key = line.slice(0, colonIdx).trim();
@@ -101,7 +111,47 @@ function parseFields(raw: string): Field[] {
     i++;
   }
 
+  if (hasOtp) {
+    fields.push({ label: "otp", value: "", otp: true });
+  }
+
   return fields;
+}
+
+async function getOtp(entry: string): Promise<string> {
+  const { stdout } = await execFileAsync("pass", ["otp", entry], { env: EXEC_ENV });
+  return stdout.trim();
+}
+
+function OtpItem({ entry }: { entry: string }) {
+  const [code, setCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    getOtp(entry)
+      .then(setCode)
+      .catch((err) => {
+        showToast({ style: Toast.Style.Failure, title: "OTP generation failed", message: String(err) });
+      });
+  }, [entry]);
+
+  return (
+    <List.Item
+      title="otp"
+      accessories={[{ text: code ?? "generating..." }]}
+      actions={
+        code ? (
+          <ActionPanel>
+            <Action.CopyToClipboard title="Copy Value" content={code} />
+            <Action.Paste
+              title="Paste Value"
+              content={code}
+              shortcut={{ modifiers: ["cmd"], key: "return" }}
+            />
+          </ActionPanel>
+        ) : undefined
+      }
+    />
+  );
 }
 
 function DetailsView({ entry, raw }: { entry: string; raw: string }) {
@@ -109,27 +159,31 @@ function DetailsView({ entry, raw }: { entry: string; raw: string }) {
 
   return (
     <List navigationTitle={entry}>
-      {fields.map((field, i) => (
-        <List.Item
-          key={i}
-          title={field.label || "(unlabeled)"}
-          accessories={[{ text: field.concealed ? "••••••••" : field.value }]}
-          actions={
-            <ActionPanel>
-              <Action.CopyToClipboard
-                title="Copy Value"
-                content={field.value}
-                concealed={field.concealed}
-              />
-              <Action.Paste
-                title="Paste Value"
-                content={field.value}
-                shortcut={{ modifiers: ["cmd"], key: "return" }}
-              />
-            </ActionPanel>
-          }
-        />
-      ))}
+      {fields.map((field, i) =>
+        field.otp ? (
+          <OtpItem key={i} entry={entry} />
+        ) : (
+          <List.Item
+            key={i}
+            title={field.label || "(unlabeled)"}
+            accessories={[{ text: field.concealed ? "••••••••" : field.value }]}
+            actions={
+              <ActionPanel>
+                <Action.CopyToClipboard
+                  title="Copy Value"
+                  content={field.value}
+                  concealed={field.concealed}
+                />
+                <Action.Paste
+                  title="Paste Value"
+                  content={field.value}
+                  shortcut={{ modifiers: ["cmd"], key: "return" }}
+                />
+              </ActionPanel>
+            }
+          />
+        )
+      )}
     </List>
   );
 }

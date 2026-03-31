@@ -30,11 +30,126 @@ Open Raycast and search **"Search Passwords"**. Your password store entries appe
 
 | Shortcut | Action |
 |---|---|
-| `Enter` | Copy password to clipboard (concealed) |
+| `Enter` | Copy password (single-line entry) or open detail view (multi-line entry) |
 | `Cmd + Enter` | Paste password into the frontmost app |
-| `Cmd + Shift + Enter` | View full entry details (password + metadata) |
 
 Decryption is handled by `pass show`, which delegates to GPG. If your GPG agent has the passphrase cached, actions are instant; otherwise GPG will prompt for your passphrase.
+
+### Search
+
+Search supports multiple query styles:
+
+- **Path search**: type a literal path like `web/digital-ocean/` to match as a substring
+- **Word search**: type space-separated words like `digital ocean` to match against any part of the path (path separators like `/`, `-`, `_`, `.` are treated as word boundaries)
+
+### Multi-line entries
+
+If a password entry contains more than one line, pressing Enter opens a detail view showing each key/value field as a row. From there you can arrow through fields and copy any value. If the entry is a single line (password only), Enter copies it directly.
+
+## OTP (Two-Factor Authentication)
+
+Pass supports TOTP codes via the [pass-otp](https://github.com/tadfisher/pass-otp) extension.
+
+### Install pass-otp
+
+```bash
+brew install pass-otp
+```
+
+### Adding OTP to an existing entry
+
+Most services show a QR code when setting up 2FA. You need the `otpauth://` URI hidden inside that QR code.
+
+**Option A: Copy the secret manually**
+
+Many services (including AWS) offer a "Can't scan the barcode?" or "Show secret key" link next to the QR code. Click it to reveal the secret, then construct the URI yourself:
+
+```bash
+pass otp append -s my-entry --issuer Example
+```
+
+Or use `--account` instead of `--issuer` (or both). Recent `pass-otp` (e.g. Homebrew 1.1.1+) requires **one of** `--issuer` / `--account` when using `-s`, or you will see: `Missing one of either '--issuer' or '--account'`.
+
+This prompts for the secret key. Paste the secret and it generates the `otpauth://` URI for you. By default it assumes TOTP with 30-second period and 6 digits, which is correct for most services.
+
+If you need more control, you can write the full URI directly:
+
+```bash
+pass otp append my-entry
+```
+
+Then paste a full URI like:
+
+```
+otpauth://totp/AWS:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=AWS
+```
+
+**Option B: Decode the QR code**
+
+If you only have the QR code image (e.g. a screenshot), decode it to extract the `otpauth://` URI:
+
+```bash
+# Install zbar for QR decoding
+brew install zbar
+
+# Decode a screenshot
+zbarimg --raw screenshot.png
+```
+
+This prints the `otpauth://` URI. Then append it:
+
+```bash
+pass otp append my-entry
+# paste the otpauth:// URI
+```
+
+**Option C: Scan from screen**
+
+If the QR code is currently displayed on screen, you can screenshot and decode in one step:
+
+```bash
+screencapture -i /tmp/qr.png && zbarimg --raw /tmp/qr.png
+```
+
+This lets you select a region of your screen. The decoded URI is printed to the terminal.
+
+### AWS example
+
+When enabling MFA on an AWS IAM user:
+
+1. AWS shows a QR code. Click **"Show secret key"** to reveal the text secret.
+2. Add it to your existing AWS entry (issuer label is what many apps show as “AWS”):
+   ```bash
+   pass otp append -s aws/iam/alice --issuer AWS
+   ```
+3. Paste the secret key when prompted.
+4. Enter the TOTP code back into AWS to confirm:
+   ```bash
+   pass otp aws/iam/alice
+   ```
+
+### Generating OTP codes
+
+```bash
+# Print the current TOTP code
+pass otp my-entry
+
+# Copy it to clipboard (clears after 45s)
+pass otp -c my-entry
+```
+
+### Entry format
+
+After appending, your entry will look like:
+
+```
+mysecretpassword
+username: alice
+url: https://example.com
+otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example
+```
+
+The `otpauth://` line is used by `pass otp` and will appear as a field in the detail view of this extension.
 
 ## Configuration
 
