@@ -1,41 +1,7 @@
-import { List, ActionPanel, Action, Clipboard, showToast, Toast, useNavigation } from "@raycast/api";
+import { List, ActionPanel, Action, Clipboard, Icon, showToast, Toast, useNavigation } from "@raycast/api";
 import { useState, useEffect } from "react";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { homedir } from "os";
-import { readdir, stat } from "fs/promises";
-import { join, relative } from "path";
-
-const execFileAsync = promisify(execFile);
-
-const STORE_DIR = process.env.PASSWORD_STORE_DIR || join(homedir(), ".password-store");
-
-const PATH = [
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  "/usr/bin",
-  "/bin",
-  process.env.PATH,
-].join(":");
-
-const EXEC_ENV = { ...process.env, PATH };
-
-async function scanStore(dir: string, base: string = dir): Promise<string[]> {
-  const entries: string[] = [];
-  const items = await readdir(dir);
-  for (const item of items) {
-    if (item.startsWith(".")) continue;
-    const full = join(dir, item);
-    const s = await stat(full);
-    if (s.isDirectory()) {
-      entries.push(...(await scanStore(full, base)));
-    } else if (item.endsWith(".gpg")) {
-      const rel = relative(base, full);
-      entries.push(rel.replace(/\.gpg$/, ""));
-    }
-  }
-  return entries;
-}
+import { folderOf, getOtp, getPassword, joinEntryPath, scanStore } from "./lib/pass";
+import EntryForm from "./components/EntryForm";
 
 function groupByFolder(entries: string[]): Map<string, string[]> {
   const groups = new Map<string, string[]>();
@@ -46,16 +12,6 @@ function groupByFolder(entries: string[]): Map<string, string[]> {
     groups.get(folder)!.push(entry);
   }
   return groups;
-}
-
-async function getPassword(entry: string): Promise<string> {
-  const { stdout } = await execFileAsync("pass", ["show", entry], { env: EXEC_ENV });
-  return stdout;
-}
-
-function entryName(entry: string): string {
-  const parts = entry.split("/");
-  return parts[parts.length - 1];
 }
 
 interface Field {
@@ -118,11 +74,6 @@ function parseFields(raw: string): Field[] {
   return fields;
 }
 
-async function getOtp(entry: string): Promise<string> {
-  const { stdout } = await execFileAsync("pass", ["otp", entry], { env: EXEC_ENV });
-  return stdout.trim();
-}
-
 function OtpItem({ entry }: { entry: string }) {
   const [code, setCode] = useState<string | null>(null);
 
@@ -154,8 +105,30 @@ function OtpItem({ entry }: { entry: string }) {
   );
 }
 
-function DetailsView({ entry, raw }: { entry: string; raw: string }) {
+function DetailsView({ entry, raw, onSaved }: { entry: string; raw: string; onSaved: () => void }) {
+  const { push, pop } = useNavigation();
   const fields = parseFields(raw);
+
+  // After saving, leave this (now stale) view and return to the refreshed list
+  const editAction = (
+    <Action
+      title="Edit Entry"
+      icon={Icon.Pencil}
+      shortcut={{ modifiers: ["cmd"], key: "e" }}
+      onAction={() =>
+        push(
+          <EntryForm
+            mode="edit"
+            entry={entry}
+            onSaved={() => {
+              onSaved();
+              pop();
+            }}
+          />
+        )
+      }
+    />
+  );
 
   return (
     <List navigationTitle={entry}>
@@ -179,6 +152,7 @@ function DetailsView({ entry, raw }: { entry: string; raw: string }) {
                   content={field.value}
                   shortcut={{ modifiers: ["cmd"], key: "return" }}
                 />
+                {editAction}
               </ActionPanel>
             }
           />
@@ -188,7 +162,77 @@ function DetailsView({ entry, raw }: { entry: string; raw: string }) {
   );
 }
 
-function EntryItem({ entry }: { entry: string }) {
+/** Where a new entry typed into the search bar (e.g. "web/newsite") should go. */
+interface CreateTarget {
+  folder: string;
+  name: string;
+}
+
+/**
+ * Splits a search like "web/aws/new-thing" into the deepest existing folder
+ * ("web/aws") and the rest ("new-thing"). Returns undefined for searches without "/".
+ */
+function createTargetFromSearch(search: string, dirs: Set<string>): CreateTarget | undefined {
+  const path = search.trim().replace(/^\/+/, "");
+  if (!path.includes("/")) return undefined;
+  const segments = path.split("/");
+  for (let i = segments.length - 1; i > 0; i--) {
+    const folder = segments.slice(0, i).join("/");
+    if (dirs.has(folder)) return { folder, name: segments.slice(i).join("/") };
+  }
+  return { folder: "", name: path };
+}
+
+function CreateActions({
+  folder,
+  searchTarget,
+  onSaved,
+}: {
+  folder?: string;
+  searchTarget?: CreateTarget;
+  onSaved: () => void;
+}) {
+  const { push } = useNavigation();
+  const create = (target: Partial<CreateTarget>) =>
+    push(<EntryForm mode="create" initialFolder={target.folder} initialName={target.name} onSaved={onSaved} />);
+
+  return (
+    <ActionPanel.Section>
+      {searchTarget && (
+        <Action
+          title={searchTarget.name ? `Create ${joinEntryPath(searchTarget.folder, searchTarget.name)}` : `New Entry in ${searchTarget.folder}/`}
+          icon={Icon.PlusCircle}
+          shortcut={{ modifiers: ["cmd"], key: "n" }}
+          onAction={() => create(searchTarget)}
+        />
+      )}
+      {folder && (
+        <Action
+          title={`New Entry in ${folder}/`}
+          icon={Icon.NewFolder}
+          shortcut={searchTarget ? undefined : { modifiers: ["cmd"], key: "n" }}
+          onAction={() => create({ folder })}
+        />
+      )}
+      <Action
+        title="New Entry…"
+        icon={Icon.Plus}
+        shortcut={{ modifiers: ["cmd", "shift"], key: "n" }}
+        onAction={() => create({})}
+      />
+    </ActionPanel.Section>
+  );
+}
+
+function EntryItem({
+  entry,
+  searchTarget,
+  onSaved,
+}: {
+  entry: string;
+  searchTarget?: CreateTarget;
+  onSaved: () => void;
+}) {
   const { push } = useNavigation();
 
   async function selectEntry() {
@@ -199,7 +243,7 @@ function EntryItem({ entry }: { entry: string }) {
         await Clipboard.copy(lines[0], { concealed: true });
         await showToast({ style: Toast.Style.Success, title: "Password copied" });
       } else {
-        push(<DetailsView entry={entry} raw={raw} />);
+        push(<DetailsView entry={entry} raw={raw} onSaved={onSaved} />);
       }
     } catch (err) {
       await showToast({ style: Toast.Style.Failure, title: "Decryption failed", message: String(err) });
@@ -228,6 +272,13 @@ function EntryItem({ entry }: { entry: string }) {
             shortcut={{ modifiers: ["cmd"], key: "return" }}
             onAction={pastePassword}
           />
+          <Action
+            title="Edit Entry"
+            icon={Icon.Pencil}
+            shortcut={{ modifiers: ["cmd"], key: "e" }}
+            onAction={() => push(<EntryForm mode="edit" entry={entry} onSaved={onSaved} />)}
+          />
+          <CreateActions folder={folderOf(entry)} searchTarget={searchTarget} onSaved={onSaved} />
         </ActionPanel>
       }
     />
@@ -257,34 +308,49 @@ function filterEntries(grouped: Map<string, string[]>, query: string): Map<strin
 
 export default function Command() {
   const [allEntries, setAllEntries] = useState<Map<string, string[]>>(new Map());
+  const [dirs, setDirs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    scanStore(STORE_DIR)
-      .then((list) => {
-        setAllEntries(groupByFolder(list));
+  function reload() {
+    setLoading(true);
+    scanStore()
+      .then(({ entries, dirs }) => {
+        setAllEntries(groupByFolder(entries));
+        setDirs(new Set(dirs));
         setLoading(false);
       })
       .catch((err) => {
         showToast({ style: Toast.Style.Failure, title: "Failed to scan password store", message: String(err) });
         setLoading(false);
       });
-  }, []);
+  }
+
+  useEffect(reload, []);
 
   const filtered = filterEntries(allEntries, search);
+  const searchTarget = createTargetFromSearch(search, dirs);
 
   return (
     <List
       isLoading={loading}
-      searchBarPlaceholder="Search passwords..."
+      searchBarPlaceholder="Search passwords, or type a path like web/new-site to create..."
       filtering={false}
       onSearchTextChange={setSearch}
     >
+      <List.EmptyView
+        title={searchTarget ? `No entries match ${search}` : "No matching entries"}
+        description={searchTarget ? "Press Enter to create it" : "Type a path containing / to create a new entry"}
+        actions={
+          <ActionPanel>
+            <CreateActions searchTarget={searchTarget} onSaved={reload} />
+          </ActionPanel>
+        }
+      />
       {[...filtered.entries()].map(([folder, items]) => (
         <List.Section key={folder} title={folder}>
           {items.map((entry) => (
-            <EntryItem key={entry} entry={entry} />
+            <EntryItem key={entry} entry={entry} searchTarget={searchTarget} onSaved={reload} />
           ))}
         </List.Section>
       ))}

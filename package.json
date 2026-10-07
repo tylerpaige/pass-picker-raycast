@@ -1,7 +1,7 @@
 {
   "name": "pass-picker",
   "title": "Pass Picker",
-  "description": "Search and copy passwords from the pass password store",
+  "description": "Search, copy, create and edit passwords in the pass password store",
   "icon": "icon.png",
   "author": "tylerpaige",
   "categories": ["Security"],
@@ -13,6 +13,30 @@
       "title": "Search Passwords",
       "description": "List and search entries in your pass password store",
       "mode": "view"
+    },
+    {
+      "name": "create-entry",
+      "title": "Create Password",
+      "description": "Add a new entry to your pass store with a generated password",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "defaultLength",
+      "title": "Default Password Length",
+      "description": "Length used when generating passwords",
+      "type": "textfield",
+      "default": "20",
+      "required": false
+    },
+    {
+      "name": "defaultSpecials",
+      "title": "Default Special Characters",
+      "description": "Special characters generated passwords may contain. Leave empty for letters and digits only.",
+      "type": "textfield",
+      "default": "!@#$%^&*()_",
+      "required": false
     }
   ],
   "dependencies": {
